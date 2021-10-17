@@ -1,9 +1,8 @@
-# NOT READY FOR USE
 # cc-config
-Basic script meant to control symlinks for cc, c++, ld, etc.
+Basic script meant to control symlinks for cc, c++, etc.
 The aim for this script is to work with Clang, LLVM, GCC, and Binutils.
 
-This is a very early script and has basic error checking.
+This is a very early script and has only basic error checking.
 
 # TODO:
   - [ ] eselect module

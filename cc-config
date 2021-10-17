@@ -1,5 +1,5 @@
 #!/bin/sh
-# Manages symlinks for cc, c++, ld, etc.
+# Manages symlinks for cc, c++, etc.
 
 # Usage Statement
 usage() {
@@ -7,7 +7,7 @@ usage() {
 	do printf '%b\n' "$line"
 	done <<-USAGE
 	usage: ${0##*/} [-b <TOOLSET> | -c <TOOLSET>] [options]
-	Manages symlinks for cc, c++, ld, etc.
+	Manages symlinks for cc, c++, etc.
 
 	options:
 	-L            list available binary tool package versions
