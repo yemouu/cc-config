@@ -10,15 +10,15 @@ usage() {
 	Manages symlinks for cc, c++, ld, etc.
 
 	options:
+	-L            list available binary tool package versions
+	-l            list available C/C++ compilers
+	-b <TOOLSET>  set binary tool symlinks
+	-c <TOOLSET>  set C/C++ compiler symlinks
 	-B            print current binary tool set
 	-C            print current C/C++ compiler set
 	-D            delete both binary and compiler tool symlinks
-	-L            list available binary tool package versions
-	-b <TOOLSET>  set binary tool symlinks
-	-c <TOOLSET>  set C/C++ compiler symlinks
 	-d <bin|cc>   delete symlinks
 	-h            display this message
-	-l            list available C/C++ compilers
 	-v            show version
 	USAGE
 
@@ -30,7 +30,11 @@ print_version() {
 	exit 0
 }
 
+# Print to stdout
 msg() { printf "${0##*/}: %b\n" "$*"; }
+
+# Print to stderr
+emsg() { printf "${0##*/}: %b\n" "$*" 1>&2; }
 
 # Make sure we are only doing one type of operation
 # args allowed together:
@@ -39,11 +43,11 @@ msg() { printf "${0##*/}: %b\n" "$*"; }
 # 	-b and -c
 set_action_type() {
 	[ "$action_type" ] || { action_type=$1; return 0; }
-	[ "$action_type" = "$1" ] || { msg "too many actions\n" 1>&2; usage 1>&2; exit 1; }
+	[ "$action_type" = "$1" ] || { emsg "too many actions\n"; usage 1>&2; }
 }
 
 # Parse Arguments
-[ "$*" ] || usage 1
+[ "$*" ] || usage 1>&2
 while [ "$*" ]
 do
 	case $1 in
@@ -57,60 +61,77 @@ do
 	do
 		arg=${flag%${flag#?}}
 		case $arg in
-			B ) current_bin=1; set_action_type current ;;
-			C ) current_cc=1; set_action_type current ;;
-			D ) delete_symlinks=1; set_action_type delete ;;
-			L ) list_available_bin=1; set_action_type list ;;
-			b ) set_bin_symlinks=1; set_action_type set
-			    if [ "$1" ]
-			    then bin_selection=$1; shift
-			    else msg "-$arg: missing value\n" 1>&2; usage 1>&2
-			    fi
+			B )current_bin=1; set_action_type "current" ;;
+			C )current_cc=1; set_action_type "current" ;;
+			D )delete_symlinks=1; set_action_type "delete" ;;
+			L )list_available_bin=1; set_action_type "list" ;;
+			b )
+				set_bin_symlinks=1; set_action_type "set"
+				if [ "$1" ]
+				then bin_selection=$1; shift
+				else emsg "-$arg: missing value\n"; usage 1>&2
+				fi
 			;;
-			c ) set_cc_symlinks=1; set_action_type set
-			    if [ "$1" ]
-			    then cc_selection=$1; shift
-			    else msg "-$arg: missing value\n" 1>&2; usage 1>&2
-			    fi
+			c )
+				set_cc_symlinks=1; set_action_type "set"
+				if [ "$1" ]
+				then cc_selection=$1; shift
+				else emsg "-$arg: missing value\n"; usage 1>&2
+				fi
 			;;
-			d ) set_action_type delete_single
-			    case $1 in
-			    	bin ) delete_symlinks=bin; shift ;;
-			    	cc  ) delete_symlinks=cc; shift ;;
-			    esac
-			    [ "$delete_symlinks_bin" ] || [ "$delete_symlinks_cc" ] ||
-			    	msg "-$arg: invalid value $1" 1>&2
+			d )
+				set_action_type "delete_single"
+				case $1 in
+					bin ) delete_symlinks=bin; shift ;;
+					cc  ) delete_symlinks=cc; shift ;;
+				esac
+				[ "$delete_symlinks" ] || { emsg "-$arg: invalid value $1\n"; usage 1>&2; }
 			;;
 			v ) print_version ;;
 			h ) usage 0 ;;
 			l ) list_available_cc=1; set_action_type list ;;
-			* ) msg "-$arg: invalid argument\n" 1>&2; usage 1>&2 ;;
+			* ) emsg "-$arg: invalid argument\n"; usage 1>&2 ;;
 		esac
 		flag="${flag#?}"
 	done
 done
-[ "$action_type" ] || { msg "no action set\n" 1>&2; usage 1>&2; }
+
+[ "$action_type" ] || { emsg "no action set\n"; usage 1>&2; }
 
 # CHOST is needed to find binutils and gcc but will also be used for some symlinks
 [ "$CHOST" ] || {
 	CHOST="$(portageq envvar CHOST)"
-	[ "$CHOST" ] || { msg "\$CHOST not set. Portage may be broken" 1>&2; exit 1; }
+	[ "$CHOST" ] || { emsg "\$CHOST not set. Portage may be broken"; exit 1; }
 }
 
 db_path="/var/db/${0##*/}"
 
 print_current_bin() {
 	[ "$current_bin" ] || return 0
+	[ -f "$db_path/bin" ] || {
+		emsg "Current binary tools not available. See \`-h\` for how to set them"
+		exit 1
+	}
+
 	while read -r line
 	do printf '%s\n' "$line"
 	done < "$db_path/bin"
+
+	unset line
 }
 
 print_current_cc() {
 	[ "$current_cc" ] || return 0
+	[ -f "$db_path/bin" ] || {
+		emsg "Current C/C++ compiler tools not available. See \`-h\` for how to set them"
+		exit 1
+	}
+
 	while read -r line
 	do printf '%s\n' "$line"
 	done < "$db_path/cc"
+
+	unset line
 }
 
 # sys-devel/binutils - /usr/$CHOST/binutils-bin/<version>
@@ -125,63 +146,66 @@ find_available() {
 
 	sep=${2:-:}
 
+	list=""
 	for version in "$search_path/"[0-9]*
-	do list="$list$version$sep"
+	do [ -d "$version" ] && list="$list$version$sep"
 	done
 
 	for slot in /usr/lib/llvm/*
 	do
+		[ -d "$slot" ] || continue
 		[ "$do_clang_check" ] && { [ -e "$slot/bin/clang" ] || continue; }
 		list="$list$slot$sep"
 	done
 
 	list=${list%$sep}
-	[ "$list" ] || { msg unable to find "$1" tools 1>&2; exit 1; }
+	[ "$list" ] || { emsg unable to find "$1" tools; exit 1; }
 
 	printf '%s' "$list"
-	unset list do_clang_check
+
+	unset search_path do_clang_check sep list version slot
 }
 
-construct_name() {
+construct_name() (
 	name=${1%/*}; name="${name##*/}"; name="${name%-bin}"
 	version="${1##*/}"
 	[ "$name" = llvm ] && [ "$2" = cc  ] && name=clang
-	printf '%s' "$name-$version"
-}
 
-print_list() {
+	printf '%s' "$name-$version"
+)
+
+print_list() (
 	case $2 in
 		bin ) list_header="Binary Tools:";;
 		cc  ) list_header="C/C++ Tools";;
 	esac
 
-	OLD_IFS=$IFS
-	IFS=:
-
 	printf '%s\n' "$list_header"
 
+	IFS=:
 	count=0
 	for item in $1
 	do
 		printf '%s\n' "  [$count] $(construct_name "$item" "$2")"
 		count=$((count+1))
 	done
-	IFS=$OLD_IFS
-}
+)
 
-print_available_bin() {
+print_available_bin() (
 	[ "$list_available_bin" ] || return 0
 	available_bin=$(find_available bin)
+
 	print_list "$available_bin" bin
 	printf '\n'
-}
+)
 
-print_available_cc() {
+print_available_cc() (
 	[ "$list_available_cc" ] || return 0
 	available_cc=$(find_available cc)
+
 	print_list "$available_cc" cc
 	printf '\n'
-}
+)
 
 deconstruct_name() {
 	version="${1#*-}"
@@ -190,13 +214,13 @@ deconstruct_name() {
 	case $2 in
 		bin )
 			[ "$name" = binutils ] || [ "$name" = llvm ] || {
-				msg "\"$1\" is an invalid selection for $2 tools" 1>&2
+				emsg "\"$1\" is an invalid selection for $2 tools"
 				exit 1
 			}
 		;;
-		cc  )
+		cc )
 			[ "$name" = clang ] || [ "$name" = gcc ] || {
-				msg "\"$1\" is an invalid selection for $2 tools" 1>&2
+				emsg "\"$1\" is an invalid selection for $2 tools"
 				exit 1
 			}
 		;;
@@ -206,20 +230,24 @@ deconstruct_name() {
 		binutils|gcc ) printf '%s' "/usr/$CHOST/$name-bin/$version" ;;
 		clang|llvm   ) printf '%s' "/usr/lib/llvm/$version" ;;
 	esac
+
+	unset version name
 }
 
 deconstruct_number() {
 	case $1 in
-		*[!0-9]* ) msg "\"$1\" is not a number" 1>&2; exit 1 ;;
-		*        ) num=$1;;
+		*[!0-9]* ) emsg "\"$1\" is not a number"; exit 1 ;;
+		*        ) num=$1 ;;
 	esac
 
 	# shellcheck disable=SC2046
 	set -- $(find_available "$2" ' ')
-	[ $# -gt "$num" ] || { msg "\"$num\" is not a valid selection" 1>&2; exit 1; }
+	[ $# -gt "$num" ] || { emsg "\"$num\" is not a valid selection"; exit 1; }
 
 	shift "$num"
 	printf '%s' "$1"
+
+	unset num
 }
 
 get_symlink_list() {
@@ -234,19 +262,20 @@ get_symlink_list() {
 		;;
 	esac
 
+	list=""
 	for i
 	do [ -e "$path/$path_suffix$i" ] && list="$list$path/$path_suffix$i:"
 	done
 
 	list="${list%:}"
-	[ "$list" ] || { msg nothing to symlink 1>&2; exit 1; }
+	[ "$list" ] || { emsg nothing to symlink; exit 1; }
 
 	printf '%s' "$list"
-	unset path_suffix list
+
+	unset path type path_suffix list
 }
 
-make_symlinks() {
-	OLD_IFS=$IFS
+make_symlinks() (
 	IFS=:
 	for i in $1
 	do
@@ -269,8 +298,7 @@ make_symlinks() {
 		mv "$temp" "/usr/bin/$dest"
 		[ "$dest" = cc ] || mv "$temp_chost" "/usr/bin/$CHOST-$dest"
 	done
-	IFS=$OLD_IFS
-}
+)
 
 update_current() {
 	mkdir -p "$db_path"
@@ -296,7 +324,7 @@ update_bin_symlinks() {
 	case $1 in
 		[0-9]* ) path=$(deconstruct_number "$1" bin) ;;
 		[a-z]* ) path=$(deconstruct_name "$1" bin) ;;
-		*      ) msg "\"$1\" is an invalid selection" 1>&2; exit 1 ;;
+		*      ) emsg "\"$1\" is an invalid selection"; exit 1 ;;
 	esac
 
 	# shellcheck disable=SC2086
@@ -310,6 +338,8 @@ update_bin_symlinks() {
 
 	make_symlinks "$symlinks"
 	update_current "$path" bin
+
+	unset binary_tools_binutils binary_tools_llvm binary_tools_common path symlinks
 }
 
 update_cc_symlinks() {
@@ -336,17 +366,25 @@ update_cc_symlinks() {
 
 	make_symlinks "$symlinks"
 	update_current "$path" cc
+
+	unset compiler_tools_gcc compiler_tools_clang compiler_tools_common path symlinks
 }
 
-delete_symlinks() {
+delete_symlinks() (
 	[ "$delete_symlinks" ] || return 0
+
 	binary_tools="addr2line ar as c++filt nm objcopy objdump ranlib readelf size strings strip"
 	compiler_tools="c++ cc cpp"
+
 	# shellcheck disable=SC2086
 	case $delete_symlinks in
-		1   ) update_current " " bin; update_current " " cc ; set -- $binary_tools $compiler_tools ;;
-		bin ) update_current " " bin ; set -- $binary_tools ;;
-		cc  ) update_current " " cc ; set -- $compiler_tools ;;
+		1 )
+			update_current " " bin
+			update_current " " cc
+			set -- $binary_tools $compiler_tools
+		;;
+		bin ) update_current " " bin; set -- $binary_tools ;;
+		cc  ) update_current " " cc; set -- $compiler_tools ;;
 	esac
 
 	for i
@@ -354,7 +392,7 @@ delete_symlinks() {
 		rm "/usr/bin/$i"
 		[ "$i" = cc ] || rm "/usr/bin/$CHOST-$i"
 	done
-}
+)
 
 case $action_type in
 	current ) print_current_bin; print_current_cc ;;
